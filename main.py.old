@@ -1,0 +1,99 @@
+from flask import Flask, Response, jsonify, request
+from yt_dlp import YoutubeDL
+from flask_cors import CORS
+import requests  # Import requests at the top
+import os
+
+app = Flask(__name__)
+CORS(app)
+
+
+# Helper function to get video info and available formats
+def get_video_info(video_id):
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+    }
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        title = info.get('title', 'Unknown Title')
+
+        # Extract available video formats (resolutions)
+        formats = []
+        for f in info['formats']:
+            if f.get('height') and f.get('ext') == 'mp4':  # Filter for mp4 video formats
+                quality = f"{f['height']}p"
+                formats.append({
+                    'quality': quality,
+                    'format_id': f['format_id']
+                })
+        return title, formats
+
+
+# /info endpoint: Returns title and available qualities
+@app.route('/info', methods=['GET'])
+def info():
+    video_id = request.args.get('videoID')
+    if not video_id:
+        return jsonify({"error": "videoID parameter is required"}), 400
+
+    try:
+        title, formats = get_video_info(video_id)
+        return jsonify({
+            "title": title,
+            "qualities": [f['quality'] for f in formats]
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# /stream endpoint: Streams the video in requested quality
+@app.route('/stream', methods=['GET'])
+def stream():
+    video_id = request.args.get('videoID')
+    quality = request.args.get('quality')
+    if not video_id or not quality:
+        return jsonify({"error": "videoID and quality parameters are required"}), 400
+
+    try:
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        # Fetch available formats to map quality to format_id
+        _, formats = get_video_info(video_id)
+        format_id = None
+        for f in formats:
+            if f['quality'] == quality:
+                format_id = f['format_id']
+                break
+        if not format_id:
+            return jsonify({"error": f"Quality {quality} not available"}), 404
+
+        # Stream the video using yt-dlp
+        ydl_opts = {
+            'format': format_id,
+            'quiet': True,
+            'no_warnings': True,
+            'get_url': True
+        }
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            stream_url = info['url']
+            print(stream_url)
+
+        # Stream the video content
+        def generate():
+            with requests.get(stream_url, stream=True) as r:
+                r.raise_for_status()
+                for chunk in r.iter_content(chunk_size=8192):
+                    yield chunk
+
+        return Response(generate(), mimetype='video/mp4', headers={
+            'Content-Disposition': 'inline',
+            'Accept-Ranges': 'bytes'
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000)
