@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask, jsonify, request
 from yt_dlp import YoutubeDL
 from flask_cors import CORS
@@ -89,4 +91,6 @@ def all_format_download_links2():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Debug mode disabled for production
+    port = int(os.getenv("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
